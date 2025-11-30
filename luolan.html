@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 粒子交互 - 实心红心版</title>
+    <style>
+        body { 
+            margin: 0; overflow: hidden; background-color: #000; 
+            font-family: -apple-system, "Microsoft YaHei", sans-serif;
+            touch-action: none;
+        }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #video-input { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; width: 1px; height: 1px; }
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; display: flex; justify-content: center; align-items: center;
+            color: #ff3333; /* 加载文字也改成红色系 */
+            font-size: 18px; z-index: 10; flex-direction: column;
+            text-align: center; padding: 20px; box-sizing: border-box;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #ff0000; /* 加载圈改成红色 */ border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #fullscreen-btn {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            padding: 12px 30px; background: rgba(255, 255, 255, 0.15);
+            color: white; border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 30px; cursor: pointer; z-index: 5; transition: opacity 0.5s;
+            font-size: 16px; backdrop-filter: blur(10px); -webkit-tap-highlight-color: transparent;
+        }
+        #gesture-hint {
+            position: absolute; top: 20px; width: 100%; color: rgba(255,255,255,0.6); font-size: 14px; pointer-events: none; z-index: 2; text-align: center; text-shadow: 0 0 10px rgba(0,0,0,0.8);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.17.0/dist/lil-gui.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <div id="loading-text">正在启动视觉引擎...</div>
+        <div style="font-size: 12px; color: #888; margin-top: 15px; max-width: 300px;">请授予摄像头权限。<br>iPhone请在Safari打开并横屏。</div>
+    </div>
+    <div id="gesture-hint">🖐️ 张开手指聚合图案 | 捏合手指扩散粒子</div>
+    <video id="video-input" playsinline webkit-playsinline></video>
+    <div id="canvas-container"></div>
+    <button id="fullscreen-btn">进入沉浸模式</button>
+
+<script>
+    const config = {
+        particleCount: 15000, 
+        particleSize: 0.18,
+        // 【修改点1】颜色改为红色
+        color: '#ff0000', 
+        shape: 'heart',
+        interactionStrength: 0,
+        handDetected: false
+    };
+
+    let scene, camera, renderer;
+    let containerGroup; 
+    
+    let particles, geometry;
+    let targetPositions = []; let initialPositions = []; 
+    
+    let textParticles, textGeometry;
+    let textTargetPositions = []; let textInitialPositions = [];
+    let textParticleCount = 0;
+
+    let smoothInteraction = 0; 
+    let gui;
+
+    function initThree() {
+        const container = document.getElementById('canvas-container');
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 30;
+        camera.position.y = 2; 
+        camera.lookAt(0,0,0);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        containerGroup = new THREE.Group();
+        scene.add(containerGroup);
+
+        createParticles(); 
+        generateShape(config.shape);
+        createTextParticles();
+
+        window.addEventListener('resize', onWindowResize, false);
+        animate();
+    }
+
+    function generateTextData(text) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const width = 512; const height = 128;
+        canvas.width = width; canvas.height = height;
+        const fontSize = 70;
+        ctx.font = `bold ${fontSize}px "Microsoft YaHei", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, width / 2, height / 2);
+        const imgData = ctx.getImageData(0, 0, width, height).data;
+        const points = [];
+        const step = 2; 
+        for (let y = 0; y < height; y += step) {
+            for (let x = 0; x < width; x += step) {
+                const alpha = imgData[(y * width + x) * 4 + 3];
+                if (alpha > 128) {
+                    const pX = (x - width / 2) * 0.08; 
+                    const pY = (height / 2 - y) * 0.08 - 15; 
+                    const pZ = 0;
+                    points.push(pX, pY, pZ);
+                }
+            }
+        }
+        return points;
+    }
+
+    function createTextParticles() {
+        const textPointsData = generateTextData('致山风');
+        textParticleCount = textPointsData.length / 3;
+        textGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(textParticleCount * 3);
+        const colors = new Float32Array(textParticleCount * 3);
+        const colorObj = new THREE.Color(config.color);
+
+        for (let i = 0; i < textParticleCount; i++) {
+            textTargetPositions[i*3] = textPointsData[i*3];
+            textTargetPositions[i*3+1] = textPointsData[i*3+1];
+            textTargetPositions[i*3+2] = textPointsData[i*3+2];
+            const ix = (Math.random() - 0.5) * 60;
+            const iy = (Math.random() - 0.5) * 60 - 15;
+            const iz = (Math.random() - 0.5) * 60;
+            textInitialPositions.push(ix, iy, iz);
+            positions[i*3] = ix; positions[i*3+1] = iy; positions[i*3+2] = iz;
+            colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b;
+        }
+        textGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        textGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({
+            size: config.particleSize * 0.8, vertexColors: true, blending: THREE.AdditiveBlending,
+            depthWrite: false, transparent: true, opacity: 0 
+        });
+        textParticles = new THREE.Points(textGeometry, material);
+        containerGroup.add(textParticles);
+    }
+
+    function createParticles() {
+        geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(config.particleCount * 3);
+        const colors = new Float32Array(config.particleCount * 3);
+        const colorObj = new THREE.Color(config.color);
+        for (let i = 0; i < config.particleCount; i++) {
+            const x = (Math.random() - 0.5) * 100; const y = (Math.random() - 0.5) * 100; const z = (Math.random() - 0.5) * 100;
+            positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+            initialPositions.push(x, y, z); targetPositions.push(0, 0, 0);
+            colors[i * 3] = colorObj.r; colors[i * 3 + 1] = colorObj.g; colors[i * 3 + 2] = colorObj.b;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({
+            size: config.particleSize, vertexColors: true, blending: THREE.AdditiveBlending,
+            depthWrite: false, transparent: true, opacity: 0.8
+        });
+        particles = new THREE.Points(geometry, material);
+        containerGroup.add(particles);
+    }
+
+    function generateShape(type) {
+        let idx = 0;
+        for (let i = 0; i < config.particleCount; i++) {
+            let x, y, z;
+            if (type === 'heart') {
+                // 【修改点2】实心心形算法
+                const t = Math.random() * Math.PI * 2;
+                // 填充因子：使用随机数的立方根来保证体积内分布均匀（避免中心过密）
+                const fillScale = Math.cbrt(Math.random());
+                
+                // 基础2D心形边界 * 填充因子
+                x = (16 * Math.pow(Math.sin(t), 3)) * fillScale;
+                y = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * fillScale;
+                
+                // Z轴厚度：越靠近中心越厚，越靠近边缘越薄，形成立体感
+                // 根据 fillScale 计算当前位置的最大厚度
+                const maxThickness = 6;
+                // 使用球面衰减模拟厚度 (边缘处 fillScale接近1，厚度接近0)
+                const currentThickness = maxThickness * Math.sqrt(1 - fillScale*fillScale);
+                z = (Math.random() - 0.5) * 2 * currentThickness;
+
+                // 整体缩放
+                x *= 0.8; y *= 0.8; z *= 0.8;
+
+            } else if (type === 'flower') {
+                const u = Math.random() * Math.PI * 2, v = Math.random() * Math.PI, r = 10 * (1 + 0.5 * Math.sin(5 * u) * Math.sin(v));
+                x = r * Math.sin(v) * Math.cos(u); y = r * Math.sin(v) * Math.sin(u); z = r * Math.cos(v);
+            } else if (type === 'star') {
+                const r = 12, theta = Math.random() * Math.PI * 2, phi = Math.acos(2 * Math.random() - 1);
+                x = r * Math.sin(phi) * Math.cos(theta); y = r * Math.sin(phi) * Math.sin(theta); z = r * Math.cos(phi);
+                if (i % 5 === 0) { const ringR = 18 + Math.random()*4, ringT = Math.random()*Math.PI*2; x = ringR * Math.cos(ringT); y = 0.5*(Math.random()-0.5); z = ringR * Math.sin(ringT); }
+            } else if (type === 'buddha') {
+                if (i < config.particleCount * 0.15) { const r = 3, u = Math.random()*Math.PI*2, v = Math.random()*Math.PI; x = r*Math.sin(v)*Math.cos(u); y = r*Math.sin(v)*Math.sin(u) + 8; z = r*Math.cos(v); }
+                else { const r = 8*Math.random(), h = 12*Math.random()-6, theta = Math.random()*Math.PI*2, width = (1-(h+6)/14)*10; x = width*Math.cos(theta)*Math.sqrt(Math.random()); y = h; z = width*Math.sin(theta)*Math.sqrt(Math.random()); }
+            } else if (type === 'fireworks') {
+                const r = 25*Math.random(), theta = Math.random()*Math.PI*2, phi = Math.random()*Math.PI; x = r*Math.sin(phi)*Math.cos(theta); y = r*Math.sin(phi)*Math.sin(theta); z = r*Math.cos(phi);
+            }
+            targetPositions[idx] = x; targetPositions[idx+1] = y; targetPositions[idx+2] = z; idx += 3;
+        }
+    }
+
+    function initMediaPipe() {
+        const videoElement = document.getElementById('video-input');
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onHandsResults);
+        const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
+        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败。<br>请确保使用HTTPS并允许摄像头权限。"; });
+    }
+
+    function onHandsResults(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            config.handDetected = true;
+            const landmarks = results.multiHandLandmarks[0];
+            const thumbTip = landmarks[4]; const indexTip = landmarks[8];
+            const distance = Math.sqrt(Math.pow(thumbTip.x-indexTip.x, 2) + Math.pow(thumbTip.y-indexTip.y, 2));
+            let factor = (distance - 0.02) / (0.18 - 0.02); config.interactionStrength = Math.max(0, Math.min(1, factor));
+        } else {
+            config.handDetected = false; config.interactionStrength = 0.8 + 0.2 * Math.sin(Date.now() * 0.001); 
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const lerpSpeed = config.handDetected ? 0.12 : 0.05;
+        smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed;
+
+        const positions = geometry.attributes.position.array;
+        for (let i = 0; i < config.particleCount; i++) {
+            const px=i*3, py=i*3+1, pz=i*3+2;
+            const tx=targetPositions[px], ty=targetPositions[py], tz=targetPositions[pz];
+            const ix=initialPositions[px]*2.5, iy=initialPositions[py]*2.5, iz=initialPositions[pz]*2.5;
+            positions[px] += ( (ix + (tx - ix) * smoothInteraction) - positions[px] ) * 0.1;
+            positions[py] += ( (iy + (ty - iy) * smoothInteraction) - positions[py] ) * 0.1;
+            positions[pz] += ( (iz + (tz - iz) * smoothInteraction) - positions[pz] ) * 0.1;
+        }
+        geometry.attributes.position.needsUpdate = true;
+
+        if (textParticles) {
+            const textPos = textGeometry.attributes.position.array;
+            for (let i = 0; i < textParticleCount; i++) {
+                const px=i*3, py=i*3+1, pz=i*3+2;
+                const tx=textTargetPositions[px], ty=textTargetPositions[py], tz=textTargetPositions[pz];
+                const ix=textInitialPositions[px], iy=textInitialPositions[py], iz=textInitialPositions[pz];
+                textPos[px] += ( (ix + (tx - ix) * smoothInteraction) - textPos[px] ) * 0.1;
+                textPos[py] += ( (iy + (ty - iy) * smoothInteraction) - textPos[py] ) * 0.1;
+                textPos[pz] += ( (iz + (tz - iz) * smoothInteraction) - textPos[pz] ) * 0.1;
+            }
+            textGeometry.attributes.position.needsUpdate = true;
+            let textOpacity = (smoothInteraction - 0.5) * 2; 
+            textParticles.material.opacity = Math.max(0, Math.min(0.9, textOpacity));
+        }
+
+        containerGroup.rotation.y += 0.002;
+        if(config.shape === 'star') containerGroup.rotation.x += 0.001; else containerGroup.rotation.x = 0;
+
+        const fsBtn = document.getElementById('fullscreen-btn');
+        if (smoothInteraction > 0.9) { fsBtn.style.opacity = '0'; fsBtn.style.pointerEvents = 'none'; } 
+        else { fsBtn.style.opacity = '1'; fsBtn.style.pointerEvents = 'auto'; }
+
+        renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function initGUI() {
+        gui = new lil.GUI({ title: '控制台' });
+        if(window.innerWidth < 600) gui.close();
+        gui.add(config, 'shape', ['heart', 'flower', 'star', 'buddha', 'fireworks']).name('切换模型').onChange(val => generateShape(val));
+        
+        gui.addColor(config, 'color').name('主题颜色').onChange(val => {
+               const colorObj = new THREE.Color(val);
+               const colors = geometry.attributes.color.array;
+               for(let i=0; i<config.particleCount; i++) { colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b; }
+               geometry.attributes.color.needsUpdate = true;
+               
+               if (textGeometry) {
+                   const textColors = textGeometry.attributes.color.array;
+                    for(let i=0; i<textParticleCount; i++) { textColors[i*3] = colorObj.r; textColors[i*3+1] = colorObj.g; textColors[i*3+2] = colorObj.b; }
+                    textGeometry.attributes.color.needsUpdate = true;
+               }
+           });
+        gui.add(config, 'particleSize', 0.05, 0.4).name('粒子大小').onChange(val => {
+            particles.material.size = val;
+            if(textParticles) textParticles.material.size = val * 0.8;
+        });
+    }
+
+    document.getElementById('fullscreen-btn').addEventListener('click', () => {
+        if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => { document.getElementById('fullscreen-btn').style.display = 'none'; }); } 
+        else { if (document.exitFullscreen) document.exitFullscreen(); }
+    });
+
+    initThree(); initGUI(); setTimeout(initMediaPipe, 1000);
+</script>
+</body>
+</html>
