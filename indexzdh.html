@@ -2,32 +2,25 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D 粒子交互 - iPhone适配版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 粒子交互 - 极致简约版</title>
     <style>
         body { 
             margin: 0; overflow: hidden; background-color: #000; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            touch-action: none; /* 禁止默认触摸动作 */
+            touch-action: none;
             transition: background-color 1.5s ease; 
-            /* 防止iOS点击高亮 */
-            -webkit-tap-highlight-color: transparent;
         }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         /* 摄像头小窗：左下角 */
         #video-input { 
-            position: absolute; 
-            /* 【适配点2】避开底部 Home 条，使用 env(safe-area-inset-bottom) */
-            bottom: calc(20px + env(safe-area-inset-bottom)); 
-            left: 20px; 
+            position: absolute; bottom: 15px; left: 15px; 
             width: 100px; height: auto; opacity: 1; 
             z-index: 10; border-radius: 8px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             transform: scaleX(-1); transition: opacity 1s ease; 
             pointer-events: none;
-            /* 确保视频在iOS上不全屏播放 */
-            object-fit: cover;
         }
         
         #loading {
@@ -39,81 +32,57 @@
         .spinner { width: 30px; height: 30px; border: 3px solid #333; border-top: 3px solid #ff0000; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* 右下角按钮 */
+        /* 右下角容器 */
         .ui-container {
-            position: absolute; 
-            /* 【适配点3】抬高按钮位置，避开 iPhone 底部操作条 */
-            bottom: calc(30px + env(safe-area-inset-bottom)); 
-            right: 20px; 
-            z-index: 5; 
-            display: flex; gap: 12px; align-items: center;
+            position: absolute; bottom: 20px; right: 20px; z-index: 5; 
+            display: flex; align-items: center;
         }
 
+        /* 【修改】按钮样式：更小巧 */
         .btn {
-            padding: 10px 20px; /* 加大触控面积 */
-            border-radius: 30px; cursor: pointer; 
-            font-size: 14px; backdrop-filter: blur(10px); 
+            padding: 6px 14px; /* 缩小内边距 */
+            border-radius: 20px; cursor: pointer; 
+            font-size: 12px; /* 缩小字体 */
+            backdrop-filter: blur(5px); 
             transition: all 0.3s; border: none; outline: none; font-weight: bold;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
 
         #action-btn {
-            background: rgba(255, 20, 147, 0.9); color: white;
-            animation: pulse-btn 2s infinite ease-in-out; min-width: 80px; 
+            background: rgba(255, 20, 147, 0.85); color: white;
+            box-shadow: 0 0 10px rgba(255, 20, 147, 0.4);
+            animation: pulse-btn 2s infinite ease-in-out; min-width: 60px; 
         }
         
         @keyframes pulse-btn {
             0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+            50% { transform: scale(1.05); box-shadow: 0 0 15px rgba(255, 20, 147, 0.6); }
             100% { transform: scale(1); }
         }
-
-        #fullscreen-btn {
-            background: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #gesture-hint {
-            position: absolute; top: calc(20px + env(safe-area-inset-top)); /* 避开刘海/灵动岛 */
-            width: 100%; color: rgba(255,255,255,0.5); 
-            font-size: 13px; pointer-events: none; z-index: 2; 
-            text-align: center; text-shadow: 0 0 10px rgba(0,0,0,0.8);
-            transition: opacity 0.5s; left: 50%; transform: translateX(-50%);
-        }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://npm.elemecdn.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://npm.elemecdn.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://npm.elemecdn.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://npm.elemecdn.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="loading">
         <div class="spinner"></div>
-        <div id="loading-text">正在启动视觉引擎...</div>
-        <div style="font-size: 12px; color: #666; margin-top: 10px;">请在Safari中允许摄像头权限</div>
+        <div id="loading-text">资源加载中...</div>
     </div>
     
-    <div id="gesture-hint">🖐️ 对着左下角张开手掌</div>
-    
-    <video id="video-input" playsinline webkit-playsinline muted autoplay></video>
-    
+    <video id="video-input" playsinline webkit-playsinline></video>
     <div id="canvas-container"></div>
     
     <div class="ui-container">
         <button id="action-btn" class="btn">点这里</button>
-        <button id="fullscreen-btn" class="btn">全屏</button>
-    </div>
+        </div>
 
 <script>
-    // 【适配点5】检测移动端，自动降级粒子数以保证 iPhone 13 满帧运行
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    
     const config = {
-        // 电脑端 20000，手机端 10000 (兼顾效果与发热)
-        particleCount: isMobile ? 10000 : 20000, 
-        // 手机端粒子稍微调大一点点，弥补数量减少
-        particleSize: isMobile ? 0.22 : 0.18, 
+        particleCount: 15000, 
+        particleSize: 0.18,
         color: '#ff0000', 
         shape: 'flower', 
         interactionStrength: 0,
@@ -130,9 +99,10 @@
     let scene, camera, renderer;
     let containerGroup; 
     let particles, geometry; 
-    let targetPositions, initialPositions, particleVelocities; 
+    let targetPositions = []; let initialPositions = []; 
+    let particleVelocities = []; 
     let textParticles, textGeometry; 
-    let textTargetPositions, textInitialPositions;
+    let textTargetPositions = []; let textInitialPositions = [];
     let textParticleCount = 0;
     let smoothInteraction = 0; 
     
@@ -160,23 +130,17 @@
 
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        // 【适配点6】限制像素比，防止 retina 屏幕过热
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
         containerGroup = new THREE.Group();
         scene.add(containerGroup);
-        
-        // 初始化数组
-        targetPositions = new Float32Array(config.particleCount * 3);
-        initialPositions = new Float32Array(config.particleCount * 3);
-        particleVelocities = new Float32Array(config.particleCount * 3);
 
         createParticles(); 
         generateShape(config.shape);
         createTextParticles('山风', 0, false); 
         
-        document.getElementById('loading-text').innerText = "引擎就绪";
+        document.getElementById('loading').style.display = 'none';
 
         window.addEventListener('resize', onWindowResize, false);
         animate();
@@ -218,16 +182,12 @@
         const positions = new Float32Array(textParticleCount * 3);
         const colors = new Float32Array(textParticleCount * 3);
         const colorObj = new THREE.Color(config.color);
-        
-        textTargetPositions = new Float32Array(textParticleCount * 3);
-        textInitialPositions = new Float32Array(textParticleCount * 3);
-
         for (let i = 0; i < textParticleCount; i++) {
             textTargetPositions[i*3] = textPointsData[i*3];
             textTargetPositions[i*3+1] = textPointsData[i*3+1];
             textTargetPositions[i*3+2] = textPointsData[i*3+2];
             const ix = (Math.random() - 0.5) * 60; const iy = (Math.random() - 0.5) * 60; const iz = (Math.random() - 0.5) * 60;
-            textInitialPositions[i*3] = ix; textInitialPositions[i*3+1] = iy; textInitialPositions[i*3+2] = iz;
+            textInitialPositions.push(ix, iy, iz);
             positions[i*3] = ix; positions[i*3+1] = iy; positions[i*3+2] = iz;
             colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b;
         }
@@ -243,12 +203,11 @@
         const positions = new Float32Array(config.particleCount * 3);
         const colors = new Float32Array(config.particleCount * 3);
         const colorObj = new THREE.Color(config.color);
-        
+        particleVelocities = new Float32Array(config.particleCount * 3);
         for (let i = 0; i < config.particleCount; i++) {
             const x = (Math.random() - 0.5) * 100; const y = (Math.random() - 0.5) * 100; const z = (Math.random() - 0.5) * 100;
             positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
-            initialPositions[i*3] = x; initialPositions[i*3+1] = y; initialPositions[i*3+2] = z;
-            targetPositions[i*3] = 0; targetPositions[i*3+1] = 0; targetPositions[i*3+2] = 0;
+            initialPositions.push(x, y, z); targetPositions.push(0, 0, 0);
             colors[i * 3] = colorObj.r; colors[i * 3 + 1] = colorObj.g; colors[i * 3 + 2] = colorObj.b;
             particleVelocities[i*3] = 0; particleVelocities[i*3+1] = 0; particleVelocities[i*3+2] = 0;
         }
@@ -375,7 +334,7 @@
 
     function initMediaPipe() {
         const videoElement = document.getElementById('video-input');
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        const hands = new Hands({locateFile: (file) => `https://npm.elemecdn.com/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onHandsResults);
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
@@ -387,7 +346,6 @@
             const videoElem = document.getElementById('video-input');
             if (videoElem.style.opacity !== '0') {
                 videoElem.style.opacity = '0';
-                document.getElementById('gesture-hint').innerText = "🖐️ 移动手掌 | ✊ 握拳切图";
             }
         }
 
@@ -470,12 +428,12 @@
                 } else {
                     const lerpSpeed = config.handDetected ? 0.12 : 0.05; smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed; currentStrength = smoothInteraction; heartScale = 1;
                     
-                    // 【极速切图逻辑】握拳开始 (strength < 0.25) 即触发切换
-                    if (smoothInteraction < 0.25 && !wasHandClosed) {
+                    // 【灵敏切图逻辑】握拳(strength < 0.3) 即触发切换
+                    if (smoothInteraction < 0.3 && !wasHandClosed) {
                         wasHandClosed = true;
-                        switchToNextShape(); // 散开瞬间切图
+                        switchToNextShape(); 
                     } else if (smoothInteraction > 0.6) {
-                        wasHandClosed = false; // 张开后重置
+                        wasHandClosed = false;
                     }
                 }
                 for (let i = 0; i < config.particleCount; i++) {
@@ -501,26 +459,13 @@
 
         containerGroup.scale.set(1, 1, 1); 
         
-        const fsBtn = document.getElementById('fullscreen-btn');
-        if (appState >= STATE_FW_STAGE1_EXPLODE_CURRENT || (appState === STATE_NORMAL && currentStrength > 0.9)) { fsBtn.style.opacity = '0'; fsBtn.style.pointerEvents = 'none'; } else { fsBtn.style.opacity = '1'; fsBtn.style.pointerEvents = 'auto'; }
+        // 渲染循环...
         renderer.render(scene, camera);
     }
 
     function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
     
-    // 【适配全屏按钮逻辑】
-    document.getElementById('fullscreen-btn').addEventListener('click', () => { 
-        const doc = document.documentElement;
-        if (!document.fullscreenElement && !document.webkitFullscreenElement) { 
-            if (doc.requestFullscreen) doc.requestFullscreen();
-            else if (doc.webkitRequestFullscreen) doc.webkitRequestFullscreen(); // iOS Safari 兼容
-            else alert("您的浏览器不支持全屏，请添加到主屏幕使用");
-        } else { 
-            if (document.exitFullscreen) document.exitFullscreen();
-            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-        } 
-    });
-
+    // 初始化
     initThree(); setTimeout(initMediaPipe, 1000);
 </script>
 </body>
