@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D 粒子交互 - 最终修复版</title>
+    <title>3D 粒子交互 - 知乎源极速版</title>
     <style>
         body { 
             margin: 0; overflow: hidden; background-color: #000; 
@@ -68,16 +68,17 @@
         }
     </style>
     
-    <script src="https://cdn.bootcdn.net/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.staticfile.org/three.js/r128/three.min.js"></script>
+    
+    <script src="https://unpkg.zhimg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.zhimg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.zhimg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.zhimg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="loading">
         <div class="spinner"></div>
-        <div id="loading-text">资源加载中...</div>
+        <div id="loading-text">正在连接知乎源...</div>
     </div>
     
     <div id="gesture-hint">🖐️ 对着左下角镜头张手开始</div>
@@ -91,7 +92,6 @@
     </div>
 
 <script>
-    // === 核心逻辑开始 ===
     const config = {
         particleCount: 15000, 
         particleSize: 0.18,
@@ -152,13 +152,10 @@
         generateShape(config.shape);
         createTextParticles('山风', 0, false); 
         
-        document.getElementById('loading-text').innerText = "引擎就绪";
+        document.getElementById('loading-text').innerText = "AI引擎启动中...";
 
         window.addEventListener('resize', onWindowResize, false);
         animate();
-
-        // 延迟启动 AI，避免卡顿
-        setTimeout(initMediaPipe, 500);
     }
 
     function generateTextData(text, offsetY = 0, isFlat = false) {
@@ -348,22 +345,15 @@
     document.getElementById('action-btn').addEventListener('click', handleUiAction);
 
     function initMediaPipe() {
-        // 【关键】检查 Hands 是否加载成功，失败则提示
-        if (typeof Hands === 'undefined') {
-            document.getElementById('loading-text').innerText = "AI加载失败，请检查网络或刷新";
-            document.getElementById('loading-text').style.color = "red";
-            return;
-        }
-
         const videoElement = document.getElementById('video-input');
-        // 使用国内加速源
+        // 【核心修改】使用 unpkg.zhimg.com 知乎源
         const hands = new Hands({locateFile: (file) => {
-            return `https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/${file}`;
+            return `https://unpkg.zhimg.com/@mediapipe/hands/${file}`;
         }});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onHandsResults);
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
-        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "无法打开摄像头<br>请确保使用HTTPS访问"; });
+        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败<br>请确保使用HTTPS访问"; });
     }
 
     function onHandsResults(results) {
@@ -407,6 +397,7 @@
         requestAnimationFrame(animate);
         let currentStrength = 1; let heartScale = 1; const positions = geometry.attributes.position.array;
 
+        // 手动控制旋转
         if (config.handDetected && appState <= STATE_HEARTBEAT) {
             containerGroup.rotation.y += (targetRotationY - containerGroup.rotation.y) * 0.1;
             containerGroup.rotation.x += (targetRotationX - containerGroup.rotation.x) * 0.1;
@@ -453,7 +444,8 @@
                 } else {
                     const lerpSpeed = config.handDetected ? 0.12 : 0.05; smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed; currentStrength = smoothInteraction; heartScale = 1;
                     
-                    if (smoothInteraction < 0.3 && !wasHandClosed) {
+                    // 【灵敏切图】握拳即切
+                    if (smoothInteraction < 0.25 && !wasHandClosed) {
                         wasHandClosed = true;
                         switchToNextShape(); 
                     } else if (smoothInteraction > 0.6) {
@@ -473,6 +465,7 @@
                     for (let i = 0; i < textParticleCount; i++) {
                         const px=i*3, py=i*3+1, pz=i*3+2; const tx=textTargetPositions[px], ty=textTargetPositions[py], tz=textTargetPositions[pz]; const ix=textInitialPositions[px], iy=textInitialPositions[py], iz=textInitialPositions[pz];
                         let tx_final = ix + (tx - ix) * currentStrength; let ty_final = iy + (ty - iy) * currentStrength; let tz_final = iz + (tz - iz) * currentStrength;
+                        // 修正：文字不随心跳缩放，只跟随聚合位置
                         textPos[px] += (tx_final - textPos[px]) * 0.1; textPos[py] += (ty_final - textPos[py]) * 0.1; textPos[pz] += (tz_final - textPos[pz]) * 0.1;
                     }
                     textGeometry.attributes.position.needsUpdate = true;
@@ -491,7 +484,7 @@
     function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
     
     document.getElementById('fullscreen-btn').addEventListener('click', () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => { document.getElementById('fullscreen-btn').style.display = 'none'; }); } else { if (document.exitFullscreen) document.exitFullscreen(); } });
-    initThree(); 
+    initThree(); setTimeout(initMediaPipe, 1000);
 </script>
 </body>
 </html>
