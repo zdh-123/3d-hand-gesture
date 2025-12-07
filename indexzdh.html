@@ -2,8 +2,8 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D 粒子交互 - 知乎源极速版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 粒子交互 - 玫瑰花束版</title>
     <style>
         body { 
             margin: 0; overflow: hidden; background-color: #000; 
@@ -15,10 +15,10 @@
         
         /* 摄像头小窗 */
         #video-input { 
-            position: absolute; bottom: 15px; left: 15px; 
-            width: 100px; height: auto; opacity: 1; 
-            z-index: 10; border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: absolute; bottom: 20px; left: 20px; 
+            width: 140px; height: auto; opacity: 1; 
+            z-index: 10; border-radius: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
             transform: scaleX(-1); transition: opacity 1s ease; 
             pointer-events: none;
         }
@@ -26,70 +26,70 @@
         #loading {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #000; display: flex; justify-content: center; align-items: center;
-            color: #ff3333; font-size: 16px; z-index: 20; flex-direction: column;
+            color: #ff3333; font-size: 18px; z-index: 20; flex-direction: column;
             text-align: center; padding: 20px; box-sizing: border-box;
         }
-        .spinner { width: 30px; height: 30px; border: 3px solid #333; border-top: 3px solid #ff0000; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #ff0000; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* 右下角按钮 */
+        /* 按钮组 */
         .ui-container {
-            position: absolute; bottom: 20px; right: 20px; z-index: 5; 
-            display: flex; gap: 10px; align-items: center;
+            position: absolute; bottom: 30px; right: 30px; z-index: 5; 
+            display: flex; gap: 15px; align-items: center;
         }
 
         .btn {
-            padding: 8px 16px; border-radius: 20px; cursor: pointer; 
-            font-size: 13px; backdrop-filter: blur(5px); 
+            /* 【修改】缩小按钮内边距和字体 */
+            padding: 8px 18px; 
+            border-radius: 30px; 
+            cursor: pointer; 
+            font-size: 13px; 
+            backdrop-filter: blur(10px); 
             transition: all 0.3s; border: none; outline: none; font-weight: bold;
         }
 
         #action-btn {
             background: rgba(255, 20, 147, 0.85); color: white;
-            box-shadow: 0 0 10px rgba(255, 20, 147, 0.4);
-            animation: pulse-btn 2s infinite ease-in-out; min-width: 70px; 
+            box-shadow: 0 0 15px rgba(255, 20, 147, 0.4);
+            animation: pulse-btn 2s infinite ease-in-out; 
+            /* 【修改】缩小最小宽度 */
+            min-width: 80px; 
         }
         
         @keyframes pulse-btn {
             0% { transform: scale(1); }
-            50% { transform: scale(1.05); box-shadow: 0 0 20px rgba(255, 20, 147, 0.6); }
+            50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(255, 20, 147, 0.7); }
             100% { transform: scale(1); }
         }
 
-        #fullscreen-btn {
-            background: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
         #gesture-hint {
-            position: absolute; top: 20px; width: 100%; color: rgba(255,255,255,0.4); 
-            font-size: 12px; pointer-events: none; z-index: 2; 
-            text-align: center; transition: opacity 0.5s; left: 50%; transform: translateX(-50%);
+            position: absolute; top: 20px; width: 100%; color: rgba(255,255,255,0.6); 
+            font-size: 14px; pointer-events: none; z-index: 2; 
+            text-align: center; text-shadow: 0 0 10px rgba(0,0,0,0.8);
+            transition: opacity 0.5s; left: 50%; transform: translateX(-50%);
         }
     </style>
-    
-    <script src="https://cdn.staticfile.org/three.js/r128/three.min.js"></script>
-    
-    <script src="https://unpkg.zhimg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.zhimg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.zhimg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.zhimg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="loading">
         <div class="spinner"></div>
-        <div id="loading-text">正在连接知乎源...</div>
+        <div id="loading-text">正在启动视觉引擎...</div>
+        <div style="font-size: 12px; color: #888; margin-top: 15px; max-width: 300px;">请授予摄像头权限。<br>iPhone请在Safari打开并横屏。</div>
     </div>
     
     <div id="gesture-hint">🖐️ 对着左下角镜头张手开始</div>
     
     <video id="video-input" playsinline webkit-playsinline></video>
-    <div id="canvas-container"></div>
     
+    <div id="canvas-container"></div>
     <div class="ui-container">
         <button id="action-btn" class="btn">点这里</button>
-        <button id="fullscreen-btn" class="btn">全屏</button>
-    </div>
+        </div>
 
 <script>
     const config = {
@@ -101,8 +101,10 @@
         handDetected: false
     };
 
-    const shapeList = ['flower', 'heart', 'star', 'buddha', 'fireworks'];
+    const shapeList = ['flower', 'heart', 'rose', 'star', 'buddha', 'fireworks'];
     let currentShapeIndex = 0;
+    // 【修改点1】切图防抖锁
+    let hasSwitched = false; 
     let wasHandClosed = false; 
 
     let targetRotationX = 0;
@@ -117,6 +119,7 @@
     let textTargetPositions = []; let textInitialPositions = [];
     let textParticleCount = 0;
     let smoothInteraction = 0; 
+    // 移除了 gui 变量
     
     const STATE_NORMAL = 0;          
     const STATE_HEARTBEAT = 1;       
@@ -152,7 +155,7 @@
         generateShape(config.shape);
         createTextParticles('山风', 0, false); 
         
-        document.getElementById('loading-text').innerText = "AI引擎启动中...";
+        document.getElementById('loading-text').innerText = "准备就绪";
 
         window.addEventListener('resize', onWindowResize, false);
         animate();
@@ -187,7 +190,9 @@
 
     function createTextParticles(text, offsetY, isFlat) {
         if (textParticles) { containerGroup.remove(textParticles); if(textGeometry) textGeometry.dispose(); }
+        // 隐藏文字逻辑：如果是空字符串，就不创建
         if (!text) { textParticles = null; return; }
+        
         const textPointsData = generateTextData(text, offsetY, isFlat);
         textParticleCount = textPointsData.length / 3;
         textGeometry = new THREE.BufferGeometry();
@@ -242,6 +247,26 @@
                 z = (Math.random() - 0.5) * 2 * currentThickness;
                 x *= 0.75; y *= 0.75; z *= 0.75;
             } 
+            else if (type === 'rose') {
+                 const u = Math.random() * Math.PI * 2; const v = Math.random() * Math.PI; const scale = 6;
+                 const r = scale * (0.5 + Math.abs(Math.sin(3 * u)) * Math.sin(v));
+                 x = r * Math.sin(v) * Math.cos(u); y = r * Math.cos(v) * 0.8; z = r * Math.sin(v) * Math.sin(u);
+                 if (i % 10 === 0) { x *= 0.3; y *= 0.3; z *= 0.3; }
+                 
+                 const flowerCount = 7;
+                 const particlesPerFlower = Math.floor(config.particleCount / flowerCount);
+                 const flowerIndex = Math.floor(i / particlesPerFlower);
+                 let cx = 0, cy = 0, cz = 0;
+                 if (flowerIndex > 0) {
+                    const angle = ((flowerIndex - 1) / 6.0) * Math.PI * 2;
+                    const spread = 13;
+                    cx = Math.cos(angle) * spread; cy = (Math.random() - 0.5) * 4; cz = Math.sin(angle) * spread;
+                 } else { cy = 2; }
+                 const r_small = 4.0 * (0.5 + Math.abs(Math.sin(3 * u)) * Math.sin(v));
+                 x = r_small * Math.sin(v) * Math.cos(u) + cx;
+                 y = r_small * Math.cos(v) * 0.8 + cy;
+                 z = r_small * Math.sin(v) * Math.sin(u) + cz;
+            }
             else if (type === 'flower') { const u = Math.random()*Math.PI*2, v = Math.random()*Math.PI, r = 10*(1+0.5*Math.sin(5*u)*Math.sin(v)); x = r*Math.sin(v)*Math.cos(u); y = r*Math.sin(v)*Math.sin(u); z = r*Math.cos(v); } 
             else if (type === 'star') { const r = 12, theta = Math.random()*Math.PI*2, phi = Math.acos(2*Math.random()-1); x = r*Math.sin(phi)*Math.cos(theta); y = r*Math.sin(phi)*Math.sin(theta); z = r*Math.cos(phi); if (i%5===0) { const ringR=18+Math.random()*4, ringT=Math.random()*Math.PI*2; x=ringR*Math.cos(ringT); y=0.5*(Math.random()-0.5); z=ringR*Math.sin(ringT); }} 
             else if (type === 'buddha') { if (i<config.particleCount*0.15) { const r=3, u=Math.random()*Math.PI*2, v=Math.random()*Math.PI; x=r*Math.sin(v)*Math.cos(u); y=r*Math.sin(v)*Math.sin(u)+8; z=r*Math.cos(v); } else { const r=8*Math.random(), h=12*Math.random()-6, theta=Math.random()*Math.PI*2, width=(1-(h+6)/14)*10; x=width*Math.cos(theta)*Math.sqrt(Math.random()); y=h; z=width*Math.sin(theta)*Math.sqrt(Math.random()); }} 
@@ -346,14 +371,11 @@
 
     function initMediaPipe() {
         const videoElement = document.getElementById('video-input');
-        // 【核心修改】使用 unpkg.zhimg.com 知乎源
-        const hands = new Hands({locateFile: (file) => {
-            return `https://unpkg.zhimg.com/@mediapipe/hands/${file}`;
-        }});
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onHandsResults);
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
-        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败<br>请确保使用HTTPS访问"; });
+        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败。<br>请检查是否在HTTPS环境下运行"; });
     }
 
     function onHandsResults(results) {
@@ -444,8 +466,8 @@
                 } else {
                     const lerpSpeed = config.handDetected ? 0.12 : 0.05; smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed; currentStrength = smoothInteraction; heartScale = 1;
                     
-                    // 【灵敏切图】握拳即切
-                    if (smoothInteraction < 0.25 && !wasHandClosed) {
+                    // 【修改点2】握拳即切：当握拳程度小于 0.3 时立刻切换
+                    if (smoothInteraction < 0.3 && !wasHandClosed) {
                         wasHandClosed = true;
                         switchToNextShape(); 
                     } else if (smoothInteraction > 0.6) {
@@ -465,7 +487,6 @@
                     for (let i = 0; i < textParticleCount; i++) {
                         const px=i*3, py=i*3+1, pz=i*3+2; const tx=textTargetPositions[px], ty=textTargetPositions[py], tz=textTargetPositions[pz]; const ix=textInitialPositions[px], iy=textInitialPositions[py], iz=textInitialPositions[pz];
                         let tx_final = ix + (tx - ix) * currentStrength; let ty_final = iy + (ty - iy) * currentStrength; let tz_final = iz + (tz - iz) * currentStrength;
-                        // 修正：文字不随心跳缩放，只跟随聚合位置
                         textPos[px] += (tx_final - textPos[px]) * 0.1; textPos[py] += (ty_final - textPos[py]) * 0.1; textPos[pz] += (tz_final - textPos[pz]) * 0.1;
                     }
                     textGeometry.attributes.position.needsUpdate = true;
@@ -476,14 +497,13 @@
 
         containerGroup.scale.set(1, 1, 1); 
         
-        const fsBtn = document.getElementById('fullscreen-btn');
-        if (appState >= STATE_FW_STAGE1_EXPLODE_CURRENT || (appState === STATE_NORMAL && currentStrength > 0.9)) { fsBtn.style.opacity = '0'; fsBtn.style.pointerEvents = 'none'; } else { fsBtn.style.opacity = '1'; fsBtn.style.pointerEvents = 'auto'; }
         renderer.render(scene, camera);
     }
 
     function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
     
-    document.getElementById('fullscreen-btn').addEventListener('click', () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => { document.getElementById('fullscreen-btn').style.display = 'none'; }); } else { if (document.exitFullscreen) document.exitFullscreen(); } });
+    document.getElementById('action-btn').addEventListener('click', handleUiAction);
+    
     initThree(); setTimeout(initMediaPipe, 1000);
 </script>
 </body>
