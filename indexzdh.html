@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>3D 粒子交互 - iPhone适配版</title>
+    <style>
+        body { 
+            margin: 0; overflow: hidden; background-color: #000; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            touch-action: none; /* 禁止默认触摸动作 */
+            transition: background-color 1.5s ease; 
+            /* 防止iOS点击高亮 */
+            -webkit-tap-highlight-color: transparent;
+        }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* 摄像头小窗：左下角 */
+        #video-input { 
+            position: absolute; 
+            /* 【适配点2】避开底部 Home 条，使用 env(safe-area-inset-bottom) */
+            bottom: calc(20px + env(safe-area-inset-bottom)); 
+            left: 20px; 
+            width: 100px; height: auto; opacity: 1; 
+            z-index: 10; border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transform: scaleX(-1); transition: opacity 1s ease; 
+            pointer-events: none;
+            /* 确保视频在iOS上不全屏播放 */
+            object-fit: cover;
+        }
+        
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; display: flex; justify-content: center; align-items: center;
+            color: #ff3333; font-size: 16px; z-index: 20; flex-direction: column;
+            text-align: center; padding: 20px; box-sizing: border-box;
+        }
+        .spinner { width: 30px; height: 30px; border: 3px solid #333; border-top: 3px solid #ff0000; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* 右下角按钮 */
+        .ui-container {
+            position: absolute; 
+            /* 【适配点3】抬高按钮位置，避开 iPhone 底部操作条 */
+            bottom: calc(30px + env(safe-area-inset-bottom)); 
+            right: 20px; 
+            z-index: 5; 
+            display: flex; gap: 12px; align-items: center;
+        }
+
+        .btn {
+            padding: 10px 20px; /* 加大触控面积 */
+            border-radius: 30px; cursor: pointer; 
+            font-size: 14px; backdrop-filter: blur(10px); 
+            transition: all 0.3s; border: none; outline: none; font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        #action-btn {
+            background: rgba(255, 20, 147, 0.9); color: white;
+            animation: pulse-btn 2s infinite ease-in-out; min-width: 80px; 
+        }
+        
+        @keyframes pulse-btn {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        #fullscreen-btn {
+            background: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #gesture-hint {
+            position: absolute; top: calc(20px + env(safe-area-inset-top)); /* 避开刘海/灵动岛 */
+            width: 100%; color: rgba(255,255,255,0.5); 
+            font-size: 13px; pointer-events: none; z-index: 2; 
+            text-align: center; text-shadow: 0 0 10px rgba(0,0,0,0.8);
+            transition: opacity 0.5s; left: 50%; transform: translateX(-50%);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <div id="loading-text">正在启动视觉引擎...</div>
+        <div style="font-size: 12px; color: #666; margin-top: 10px;">请在Safari中允许摄像头权限</div>
+    </div>
+    
+    <div id="gesture-hint">🖐️ 对着左下角张开手掌</div>
+    
+    <video id="video-input" playsinline webkit-playsinline muted autoplay></video>
+    
+    <div id="canvas-container"></div>
+    
+    <div class="ui-container">
+        <button id="action-btn" class="btn">点这里</button>
+        <button id="fullscreen-btn" class="btn">全屏</button>
+    </div>
+
+<script>
+    // 【适配点5】检测移动端，自动降级粒子数以保证 iPhone 13 满帧运行
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    const config = {
+        // 电脑端 20000，手机端 10000 (兼顾效果与发热)
+        particleCount: isMobile ? 10000 : 20000, 
+        // 手机端粒子稍微调大一点点，弥补数量减少
+        particleSize: isMobile ? 0.22 : 0.18, 
+        color: '#ff0000', 
+        shape: 'flower', 
+        interactionStrength: 0,
+        handDetected: false
+    };
+
+    const shapeList = ['flower', 'heart', 'star', 'buddha', 'fireworks'];
+    let currentShapeIndex = 0;
+    let wasHandClosed = false; 
+
+    let targetRotationX = 0;
+    let targetRotationY = 0;
+
+    let scene, camera, renderer;
+    let containerGroup; 
+    let particles, geometry; 
+    let targetPositions, initialPositions, particleVelocities; 
+    let textParticles, textGeometry; 
+    let textTargetPositions, textInitialPositions;
+    let textParticleCount = 0;
+    let smoothInteraction = 0; 
+    
+    const STATE_NORMAL = 0;          
+    const STATE_HEARTBEAT = 1;       
+    const STATE_FW_STAGE1_EXPLODE_CURRENT = 2; 
+    const STATE_FW_STAGE2_ROCKET_UP = 3;       
+    const STATE_FW_STAGE3_BLOOM = 4;
+    const STATE_FW_STAGE4_FADE_OUT = 5;        
+    
+    let appState = STATE_NORMAL;
+    let globalOpacity = 1.0; 
+    const explosionCenterY = 25; 
+    const rocketParticleCount = 100; 
+
+    function initThree() {
+        const container = document.getElementById('canvas-container');
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 30;
+        camera.position.y = 0; 
+        camera.lookAt(0,0,0);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        // 【适配点6】限制像素比，防止 retina 屏幕过热
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        containerGroup = new THREE.Group();
+        scene.add(containerGroup);
+        
+        // 初始化数组
+        targetPositions = new Float32Array(config.particleCount * 3);
+        initialPositions = new Float32Array(config.particleCount * 3);
+        particleVelocities = new Float32Array(config.particleCount * 3);
+
+        createParticles(); 
+        generateShape(config.shape);
+        createTextParticles('山风', 0, false); 
+        
+        document.getElementById('loading-text').innerText = "引擎就绪";
+
+        window.addEventListener('resize', onWindowResize, false);
+        animate();
+    }
+
+    function generateTextData(text, offsetY = 0, isFlat = false) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const width = 512; const height = 256; 
+        canvas.width = width; canvas.height = height;
+        let fontSize = 32; if (text.length > 5) fontSize = 20; 
+        ctx.font = `bold ${fontSize}px Arial, "Helvetica Neue", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(text, width / 2, height / 2);
+        const imgData = ctx.getImageData(0, 0, width, height).data;
+        const points = []; const step = 2; const scale = 0.07; const thickness = 2.5; const layers = isFlat ? 1 : 8; 
+        for (let y = 0; y < height; y += step) {
+            for (let x = 0; x < width; x += step) {
+                if (imgData[(y * width + x) * 4 + 3] > 128) {
+                    const pX = (x - width / 2) * scale; const pY = (height / 2 - y) * scale + offsetY; 
+                    for (let l = 0; l < layers; l++) { 
+                        let pZ = 0;
+                        if(!isFlat) pZ = ((l / (layers - 1)) - 0.5) * thickness;
+                        points.push(pX, pY, pZ); 
+                    }
+                }
+            }
+        }
+        return points;
+    }
+
+    function createTextParticles(text, offsetY, isFlat) {
+        if (textParticles) { containerGroup.remove(textParticles); if(textGeometry) textGeometry.dispose(); }
+        if (!text) { textParticles = null; return; }
+        const textPointsData = generateTextData(text, offsetY, isFlat);
+        textParticleCount = textPointsData.length / 3;
+        textGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(textParticleCount * 3);
+        const colors = new Float32Array(textParticleCount * 3);
+        const colorObj = new THREE.Color(config.color);
+        
+        textTargetPositions = new Float32Array(textParticleCount * 3);
+        textInitialPositions = new Float32Array(textParticleCount * 3);
+
+        for (let i = 0; i < textParticleCount; i++) {
+            textTargetPositions[i*3] = textPointsData[i*3];
+            textTargetPositions[i*3+1] = textPointsData[i*3+1];
+            textTargetPositions[i*3+2] = textPointsData[i*3+2];
+            const ix = (Math.random() - 0.5) * 60; const iy = (Math.random() - 0.5) * 60; const iz = (Math.random() - 0.5) * 60;
+            textInitialPositions[i*3] = ix; textInitialPositions[i*3+1] = iy; textInitialPositions[i*3+2] = iz;
+            positions[i*3] = ix; positions[i*3+1] = iy; positions[i*3+2] = iz;
+            colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b;
+        }
+        textGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        textGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({ size: config.particleSize * 0.7, vertexColors: true, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0 });
+        textParticles = new THREE.Points(textGeometry, material);
+        containerGroup.add(textParticles);
+    }
+
+    function createParticles() {
+        geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(config.particleCount * 3);
+        const colors = new Float32Array(config.particleCount * 3);
+        const colorObj = new THREE.Color(config.color);
+        
+        for (let i = 0; i < config.particleCount; i++) {
+            const x = (Math.random() - 0.5) * 100; const y = (Math.random() - 0.5) * 100; const z = (Math.random() - 0.5) * 100;
+            positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+            initialPositions[i*3] = x; initialPositions[i*3+1] = y; initialPositions[i*3+2] = z;
+            targetPositions[i*3] = 0; targetPositions[i*3+1] = 0; targetPositions[i*3+2] = 0;
+            colors[i * 3] = colorObj.r; colors[i * 3 + 1] = colorObj.g; colors[i * 3 + 2] = colorObj.b;
+            particleVelocities[i*3] = 0; particleVelocities[i*3+1] = 0; particleVelocities[i*3+2] = 0;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({ size: config.particleSize, vertexColors: true, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8 });
+        particles = new THREE.Points(geometry, material);
+        containerGroup.add(particles);
+    }
+
+    function generateShape(type) {
+        let idx = 0;
+        for (let i = 0; i < config.particleCount; i++) {
+            let x, y, z;
+            if (type === 'heart') {
+                const t = Math.random() * Math.PI * 2; const fillScale = Math.cbrt(Math.random());
+                x = (17 * Math.pow(Math.sin(t), 3)) * fillScale;
+                y = (15 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * fillScale;
+                const currentThickness = 8 * Math.sqrt(1 - fillScale*fillScale);
+                z = (Math.random() - 0.5) * 2 * currentThickness;
+                x *= 0.75; y *= 0.75; z *= 0.75;
+            } 
+            else if (type === 'flower') { const u = Math.random()*Math.PI*2, v = Math.random()*Math.PI, r = 10*(1+0.5*Math.sin(5*u)*Math.sin(v)); x = r*Math.sin(v)*Math.cos(u); y = r*Math.sin(v)*Math.sin(u); z = r*Math.cos(v); } 
+            else if (type === 'star') { const r = 12, theta = Math.random()*Math.PI*2, phi = Math.acos(2*Math.random()-1); x = r*Math.sin(phi)*Math.cos(theta); y = r*Math.sin(phi)*Math.sin(theta); z = r*Math.cos(phi); if (i%5===0) { const ringR=18+Math.random()*4, ringT=Math.random()*Math.PI*2; x=ringR*Math.cos(ringT); y=0.5*(Math.random()-0.5); z=ringR*Math.sin(ringT); }} 
+            else if (type === 'buddha') { if (i<config.particleCount*0.15) { const r=3, u=Math.random()*Math.PI*2, v=Math.random()*Math.PI; x=r*Math.sin(v)*Math.cos(u); y=r*Math.sin(v)*Math.sin(u)+8; z=r*Math.cos(v); } else { const r=8*Math.random(), h=12*Math.random()-6, theta=Math.random()*Math.PI*2, width=(1-(h+6)/14)*10; x=width*Math.cos(theta)*Math.sqrt(Math.random()); y=h; z=width*Math.sin(theta)*Math.sqrt(Math.random()); }} 
+            else if (type === 'fireworks') { const r=25*Math.random(), theta=Math.random()*Math.PI*2, phi=Math.random()*Math.PI; x=r*Math.sin(phi)*Math.cos(theta); y=r*Math.sin(phi)*Math.sin(theta); z=r*Math.cos(phi); }
+            targetPositions[idx] = x; targetPositions[idx+1] = y; targetPositions[idx+2] = z; idx += 3;
+        }
+    }
+
+    function handleUiAction() {
+        const btn = document.getElementById('action-btn');
+        if (appState === STATE_NORMAL) {
+            appState = STATE_HEARTBEAT;
+            btn.innerHTML = "放烟花"; 
+            btn.style.background = "#ff3333"; 
+            createTextParticles("", 0, false); 
+            config.shape = 'heart'; generateShape('heart');
+            document.body.style.backgroundColor = "#1a0000";
+        } else if (appState === STATE_HEARTBEAT) {
+            startFireworksSequence();
+        }
+    }
+
+    function startFireworksSequence() {
+        const btn = document.getElementById('action-btn');
+        btn.innerHTML = "燃放中..."; btn.style.pointerEvents = "none"; btn.style.opacity = 0.6;
+        appState = STATE_FW_STAGE1_EXPLODE_CURRENT;
+        const positions = geometry.attributes.position.array;
+        for(let i=0; i<config.particleCount; i++) {
+            particleVelocities[i*3] = positions[i*3] * 0.08 * (Math.random() + 0.5);
+            particleVelocities[i*3+1] = positions[i*3+1] * 0.08 * (Math.random() + 0.5);
+            particleVelocities[i*3+2] = positions[i*3+2] * 0.08 * (Math.random() + 0.5);
+        }
+        if(textParticles) textParticles.material.opacity = 0;
+        setTimeout(() => {
+            appState = STATE_FW_STAGE2_ROCKET_UP;
+            const positions = geometry.attributes.position.array;
+            for(let i=0; i<config.particleCount; i++) {
+                if (i < rocketParticleCount) {
+                    positions[i*3] = (Math.random()-0.5) * 0.5; 
+                    positions[i*3+1] = -50 + (Math.random()-0.5) * 0.5; 
+                    positions[i*3+2] = (Math.random()-0.5) * 0.5;
+                    particleVelocities[i*3] = 0; 
+                    particleVelocities[i*3+1] = 1.4 + Math.random()*0.2; 
+                    particleVelocities[i*3+2] = 0;
+                } else {
+                    positions[i*3+1] = -9999; 
+                    particleVelocities[i*3] = 0; particleVelocities[i*3+1] = 0; particleVelocities[i*3+2] = 0;
+                }
+            }
+            geometry.attributes.position.needsUpdate = true;
+            particles.material.opacity = 1.0; 
+        }, 1500);
+    }
+
+    function checkRocketHeight() {
+        const positions = geometry.attributes.position.array;
+        if (positions[1] > explosionCenterY) { triggerBigBloom(); }
+    }
+
+    function triggerBigBloom() {
+        appState = STATE_FW_STAGE3_BLOOM;
+        particles.material.opacity = 1.0;
+        const positions = geometry.attributes.position.array;
+        const colors = geometry.attributes.color.array;
+        for(let i=0; i<config.particleCount; i++) {
+            positions[i*3] = 0; positions[i*3+1] = explosionCenterY; positions[i*3+2] = 0;
+            const theta = Math.random() * Math.PI * 2; 
+            const phi = Math.acos(2 * Math.random() - 1); 
+            const speed = 0.5 + Math.random() * 0.8; 
+            particleVelocities[i*3] = speed * Math.sin(phi) * Math.cos(theta);
+            particleVelocities[i*3+1] = speed * Math.sin(phi) * Math.sin(theta);
+            particleVelocities[i*3+2] = speed * Math.cos(phi);
+            const color = new THREE.Color();
+            color.setHSL(Math.random(), 1.0, 0.6 + Math.random()*0.2);
+            colors[i*3] = color.r; colors[i*3+1] = color.g; colors[i*3+2] = color.b;
+        }
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true; 
+        setTimeout(() => { appState = STATE_FW_STAGE4_FADE_OUT; }, 2500);
+    }
+
+    function restoreApp() {
+        appState = STATE_NORMAL; globalOpacity = 1.0; particles.material.opacity = 0.8;
+        const btn = document.getElementById('action-btn'); 
+        btn.innerHTML = "点这里"; btn.style.background = "rgba(255, 20, 147, 0.85)"; btn.style.pointerEvents = "auto"; btn.style.opacity = 1; 
+        
+        createTextParticles("山风", 0, false); 
+        config.shape = 'flower'; generateShape('flower'); 
+        document.body.style.backgroundColor = "#000000"; containerGroup.scale.set(1,1,1);
+        smoothInteraction = 0; config.interactionStrength = 0;
+        for(let i=0; i<config.particleCount*3; i++) particleVelocities[i] = 0;
+        const colorObj = new THREE.Color(config.color);
+        const colors = geometry.attributes.color.array;
+        for(let i=0; i<config.particleCount; i++) { colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b; }
+        geometry.attributes.color.needsUpdate = true;
+        
+        containerGroup.rotation.set(0,0,0);
+        targetRotationX = 0; targetRotationY = 0;
+    }
+
+    document.getElementById('action-btn').addEventListener('click', handleUiAction);
+
+    function initMediaPipe() {
+        const videoElement = document.getElementById('video-input');
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onHandsResults);
+        const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
+        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败。<br>请检查是否在HTTPS环境下运行"; });
+    }
+
+    function onHandsResults(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const videoElem = document.getElementById('video-input');
+            if (videoElem.style.opacity !== '0') {
+                videoElem.style.opacity = '0';
+                document.getElementById('gesture-hint').innerText = "🖐️ 移动手掌 | ✊ 握拳切图";
+            }
+        }
+
+        if (appState >= STATE_FW_STAGE1_EXPLODE_CURRENT) { config.handDetected = false; return; }
+        
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            config.handDetected = true; 
+            const landmarks = results.multiHandLandmarks[0]; 
+            const thumbTip = landmarks[4]; const indexTip = landmarks[8]; 
+            const distance = Math.sqrt(Math.pow(thumbTip.x-indexTip.x, 2) + Math.pow(thumbTip.y-indexTip.y, 2));
+            
+            let factor = (distance - 0.03) / (0.15 - 0.03); 
+            config.interactionStrength = Math.max(0, Math.min(1, factor));
+
+            const palmCenter = landmarks[9];
+            targetRotationY = (palmCenter.x - 0.5) * 4; 
+            targetRotationX = (palmCenter.y - 0.5) * 2; 
+            
+        } else {
+            config.handDetected = false; 
+            if(appState === STATE_NORMAL) config.interactionStrength = 0.8 + 0.2 * Math.sin(Date.now() * 0.001); 
+        }
+    }
+
+    function switchToNextShape() {
+        currentShapeIndex = (currentShapeIndex + 1) % shapeList.length;
+        const nextShape = shapeList[currentShapeIndex];
+        config.shape = nextShape;
+        generateShape(nextShape);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        let currentStrength = 1; let heartScale = 1; const positions = geometry.attributes.position.array;
+
+        // 手动控制旋转
+        if (config.handDetected && appState <= STATE_HEARTBEAT) {
+            containerGroup.rotation.y += (targetRotationY - containerGroup.rotation.y) * 0.1;
+            containerGroup.rotation.x += (targetRotationX - containerGroup.rotation.x) * 0.1;
+        } else if (appState === STATE_NORMAL) {
+            containerGroup.rotation.y += 0.002;
+            containerGroup.rotation.x += (0 - containerGroup.rotation.x) * 0.05;
+        }
+
+        switch (appState) {
+            case STATE_FW_STAGE1_EXPLODE_CURRENT: 
+                for(let i=0; i<config.particleCount; i++) {
+                    positions[i*3] += particleVelocities[i*3]; positions[i*3+1] += particleVelocities[i*3+1]; positions[i*3+2] += particleVelocities[i*3+2];
+                    particleVelocities[i*3+1] -= 0.02; 
+                }
+                geometry.attributes.position.needsUpdate = true;
+                if(textParticles && textParticles.material.opacity > 0) textParticles.material.opacity -= 0.08;
+                break;
+
+            case STATE_FW_STAGE2_ROCKET_UP: 
+                for(let i=0; i<rocketParticleCount; i++) {
+                    positions[i*3+1] += particleVelocities[i*3+1];
+                }
+                geometry.attributes.position.needsUpdate = true;
+                checkRocketHeight();
+                break;
+
+            case STATE_FW_STAGE3_BLOOM: 
+            case STATE_FW_STAGE4_FADE_OUT:       
+                for(let i=0; i<config.particleCount; i++) {
+                    particleVelocities[i*3] *= 0.96; particleVelocities[i*3+1] *= 0.96; particleVelocities[i*3+2] *= 0.96;
+                    particleVelocities[i*3+1] -= 0.008; 
+                    positions[i*3] += particleVelocities[i*3]; positions[i*3+1] += particleVelocities[i*3+1]; positions[i*3+2] += particleVelocities[i*3+2];
+                }
+                geometry.attributes.position.needsUpdate = true;
+                if (appState === STATE_FW_STAGE4_FADE_OUT) {
+                    globalOpacity -= 0.01; particles.material.opacity = Math.max(0, globalOpacity);
+                    if (globalOpacity <= 0) restoreApp(); 
+                }
+                break;
+
+            default: 
+                if (appState === STATE_HEARTBEAT) {
+                    currentStrength = 1; const time = Date.now() * 0.006; const beat = Math.pow(Math.abs(Math.sin(time)), 3); heartScale = 1.0 + 0.15 * beat;
+                } else {
+                    const lerpSpeed = config.handDetected ? 0.12 : 0.05; smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed; currentStrength = smoothInteraction; heartScale = 1;
+                    
+                    // 【极速切图逻辑】握拳开始 (strength < 0.25) 即触发切换
+                    if (smoothInteraction < 0.25 && !wasHandClosed) {
+                        wasHandClosed = true;
+                        switchToNextShape(); // 散开瞬间切图
+                    } else if (smoothInteraction > 0.6) {
+                        wasHandClosed = false; // 张开后重置
+                    }
+                }
+                for (let i = 0; i < config.particleCount; i++) {
+                    const px=i*3, py=i*3+1, pz=i*3+2; const tx=targetPositions[px], ty=targetPositions[py], tz=targetPositions[pz]; const ix=initialPositions[px]*2.5, iy=initialPositions[py]*2.5, iz=initialPositions[pz]*2.5;
+                    let cx = ix + (tx - ix) * currentStrength; let cy = iy + (ty - iy) * currentStrength; let cz = iz + (tz - iz) * currentStrength;
+                    if (appState === STATE_HEARTBEAT) { cx *= heartScale; cy *= heartScale; cz *= heartScale; }
+                    positions[px] += (cx - positions[px]) * 0.1; positions[py] += (cy - positions[py]) * 0.1; positions[pz] += (cz - positions[pz]) * 0.1;
+                }
+                geometry.attributes.position.needsUpdate = true;
+                
+                if (textParticles) {
+                    const textPos = textGeometry.attributes.position.array;
+                    for (let i = 0; i < textParticleCount; i++) {
+                        const px=i*3, py=i*3+1, pz=i*3+2; const tx=textTargetPositions[px], ty=textTargetPositions[py], tz=textTargetPositions[pz]; const ix=textInitialPositions[px], iy=textInitialPositions[py], iz=textInitialPositions[pz];
+                        let tx_final = ix + (tx - ix) * currentStrength; let ty_final = iy + (ty - iy) * currentStrength; let tz_final = iz + (tz - iz) * currentStrength;
+                        textPos[px] += (tx_final - textPos[px]) * 0.1; textPos[py] += (ty_final - textPos[py]) * 0.1; textPos[pz] += (tz_final - textPos[pz]) * 0.1;
+                    }
+                    textGeometry.attributes.position.needsUpdate = true;
+                    let textOpacity = (appState === STATE_HEARTBEAT) ? 1.0 : (currentStrength - 0.5) * 2; textParticles.material.opacity = Math.max(0, Math.min(1.0, textOpacity));
+                }
+                break;
+        }
+
+        containerGroup.scale.set(1, 1, 1); 
+        
+        const fsBtn = document.getElementById('fullscreen-btn');
+        if (appState >= STATE_FW_STAGE1_EXPLODE_CURRENT || (appState === STATE_NORMAL && currentStrength > 0.9)) { fsBtn.style.opacity = '0'; fsBtn.style.pointerEvents = 'none'; } else { fsBtn.style.opacity = '1'; fsBtn.style.pointerEvents = 'auto'; }
+        renderer.render(scene, camera);
+    }
+
+    function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+    
+    // 【适配全屏按钮逻辑】
+    document.getElementById('fullscreen-btn').addEventListener('click', () => { 
+        const doc = document.documentElement;
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) { 
+            if (doc.requestFullscreen) doc.requestFullscreen();
+            else if (doc.webkitRequestFullscreen) doc.webkitRequestFullscreen(); // iOS Safari 兼容
+            else alert("您的浏览器不支持全屏，请添加到主屏幕使用");
+        } else { 
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        } 
+    });
+
+    initThree(); setTimeout(initMediaPipe, 1000);
+</script>
+</body>
+</html>
