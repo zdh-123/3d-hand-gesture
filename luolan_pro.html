@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D 粒子交互 - 玫瑰花束版</title>
+    <title>3D 粒子交互 - 新年盛典多彩版</title>
     <style>
         body { 
             margin: 0; overflow: hidden; background-color: #000; 
@@ -39,27 +39,43 @@
         }
 
         .btn {
-            /* 【修改】缩小按钮内边距和字体 */
-            padding: 8px 18px; 
-            border-radius: 30px; 
-            cursor: pointer; 
-            font-size: 13px; 
-            backdrop-filter: blur(10px); 
-            transition: all 0.3s; border: none; outline: none; font-weight: bold;
+            padding: 12px 24px; border-radius: 30px; cursor: pointer; 
+            font-size: 15px; backdrop-filter: blur(10px); 
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+            border: none; outline: none; font-weight: bold;
         }
 
         #action-btn {
             background: rgba(255, 20, 147, 0.85); color: white;
-            box-shadow: 0 0 15px rgba(255, 20, 147, 0.4);
-            animation: pulse-btn 2s infinite ease-in-out; 
-            /* 【修改】缩小最小宽度 */
-            min-width: 80px; 
+            box-shadow: 0 0 20px rgba(255, 20, 147, 0.4);
+            animation: pulse-btn 2s infinite ease-in-out; min-width: 100px; 
         }
+
+        #newyear-btn {
+            background: linear-gradient(135deg, #ff3300, #ffaa00);
+            color: white; 
+            box-shadow: 0 10px 20px rgba(255, 51, 0, 0.3);
+        }
+        #newyear-btn:hover { transform: scale(1.1); }
+
+        /* 返回按钮样式 */
+        #back-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            color: white;
+            display: none; /* 默认隐藏 */
+        }
+        #back-btn:hover { background: rgba(255, 255, 255, 0.4); }
         
         @keyframes pulse-btn {
             0% { transform: scale(1); }
-            50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(255, 20, 147, 0.7); }
+            50% { transform: scale(1.05); box-shadow: 0 0 30px rgba(255, 20, 147, 0.7); }
             100% { transform: scale(1); }
+        }
+
+        #fullscreen-btn {
+            background: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
         #gesture-hint {
@@ -70,6 +86,7 @@
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.17.0/dist/lil-gui.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -88,10 +105,14 @@
     
     <div id="canvas-container"></div>
     <div class="ui-container">
+        <button id="back-btn" class="btn">🔙 返回</button>
+        <button id="newyear-btn" class="btn">🧨 新年快乐</button>
         <button id="action-btn" class="btn">点这里</button>
-        </div>
+        <button id="fullscreen-btn" class="btn">全屏</button>
+    </div>
 
 <script>
+    // --- 核心配置 ---
     const config = {
         particleCount: 15000, 
         particleSize: 0.18,
@@ -103,8 +124,6 @@
 
     const shapeList = ['flower', 'heart', 'rose', 'star', 'buddha', 'fireworks'];
     let currentShapeIndex = 0;
-    // 【修改点1】切图防抖锁
-    let hasSwitched = false; 
     let wasHandClosed = false; 
 
     let targetRotationX = 0;
@@ -119,19 +138,27 @@
     let textTargetPositions = []; let textInitialPositions = [];
     let textParticleCount = 0;
     let smoothInteraction = 0; 
-    // 移除了 gui 变量
+    let gui;
     
+    // --- 状态机定义 ---
     const STATE_NORMAL = 0;          
     const STATE_HEARTBEAT = 1;       
-    const STATE_FW_STAGE1_EXPLODE_CURRENT = 2; 
-    const STATE_FW_STAGE2_ROCKET_UP = 3;       
-    const STATE_FW_STAGE3_BLOOM = 4;
-    const STATE_FW_STAGE4_FADE_OUT = 5;        
+    const STATE_FW_STAGE1_EXPLODE_CURRENT = 2; // 原有粒子爆炸
+    const STATE_FW_STAGE2_ROCKET_UP = 3;       // 原有火箭
+    const STATE_FW_STAGE3_BLOOM = 4;           // 原有绽放
+    const STATE_FW_STAGE4_FADE_OUT = 5;
+    
+    // 新年模式状态
+    const STATE_NEWYEAR_TEXT = 10; // 显示文字
+    const STATE_NEWYEAR_SHOW = 11; // 播放高级烟花
     
     let appState = STATE_NORMAL;
     let globalOpacity = 1.0; 
     const explosionCenterY = 25; 
     const rocketParticleCount = 100; 
+
+    // --- 高级烟花专用容器 ---
+    let fireworks = []; 
 
     function initThree() {
         const container = document.getElementById('canvas-container');
@@ -151,9 +178,12 @@
         containerGroup = new THREE.Group();
         scene.add(containerGroup);
 
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
+        scene.add(ambientLight);
+
         createParticles(); 
         generateShape(config.shape);
-        createTextParticles('山风', 0, false); 
+        createTextParticles('岚', 0, false); 
         
         document.getElementById('loading-text').innerText = "准备就绪";
 
@@ -161,6 +191,7 @@
         animate();
     }
 
+    // --- 辅助函数：文字生成 ---
     function generateTextData(text, offsetY = 0, isFlat = false) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -188,17 +219,14 @@
         return points;
     }
 
-    function createTextParticles(text, offsetY, isFlat) {
+    function createTextParticles(text, offsetY, isFlat, customColorHex = null) {
         if (textParticles) { containerGroup.remove(textParticles); if(textGeometry) textGeometry.dispose(); }
-        // 隐藏文字逻辑：如果是空字符串，就不创建
-        if (!text) { textParticles = null; return; }
-        
         const textPointsData = generateTextData(text, offsetY, isFlat);
         textParticleCount = textPointsData.length / 3;
         textGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(textParticleCount * 3);
         const colors = new Float32Array(textParticleCount * 3);
-        const colorObj = new THREE.Color(config.color);
+        const colorObj = new THREE.Color(customColorHex || config.color);
         for (let i = 0; i < textParticleCount; i++) {
             textTargetPositions[i*3] = textPointsData[i*3];
             textTargetPositions[i*3+1] = textPointsData[i*3+1];
@@ -215,6 +243,7 @@
         containerGroup.add(textParticles);
     }
 
+    // --- 原有粒子系统 ---
     function createParticles() {
         geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(config.particleCount * 3);
@@ -235,6 +264,7 @@
         containerGroup.add(particles);
     }
 
+    // --- 形状生成 ---
     function generateShape(type) {
         let idx = 0;
         for (let i = 0; i < config.particleCount; i++) {
@@ -248,24 +278,27 @@
                 x *= 0.75; y *= 0.75; z *= 0.75;
             } 
             else if (type === 'rose') {
-                 const u = Math.random() * Math.PI * 2; const v = Math.random() * Math.PI; const scale = 6;
-                 const r = scale * (0.5 + Math.abs(Math.sin(3 * u)) * Math.sin(v));
-                 x = r * Math.sin(v) * Math.cos(u); y = r * Math.cos(v) * 0.8; z = r * Math.sin(v) * Math.sin(u);
-                 if (i % 10 === 0) { x *= 0.3; y *= 0.3; z *= 0.3; }
-                 
-                 const flowerCount = 7;
-                 const particlesPerFlower = Math.floor(config.particleCount / flowerCount);
-                 const flowerIndex = Math.floor(i / particlesPerFlower);
-                 let cx = 0, cy = 0, cz = 0;
-                 if (flowerIndex > 0) {
+                const flowerCount = 7;
+                const particlesPerFlower = Math.floor(config.particleCount / flowerCount);
+                const flowerIndex = Math.floor(i / particlesPerFlower);
+                let cx = 0, cy = 0, cz = 0;
+                if (flowerIndex > 0) {
                     const angle = ((flowerIndex - 1) / 6.0) * Math.PI * 2;
-                    const spread = 13;
-                    cx = Math.cos(angle) * spread; cy = (Math.random() - 0.5) * 4; cz = Math.sin(angle) * spread;
-                 } else { cy = 2; }
-                 const r_small = 4.0 * (0.5 + Math.abs(Math.sin(3 * u)) * Math.sin(v));
-                 x = r_small * Math.sin(v) * Math.cos(u) + cx;
-                 y = r_small * Math.cos(v) * 0.8 + cy;
-                 z = r_small * Math.sin(v) * Math.sin(u) + cz;
+                    const spread = 13; 
+                    cx = Math.cos(angle) * spread;
+                    cy = (Math.random() - 0.5) * 4; 
+                    cz = Math.sin(angle) * spread;
+                } else {
+                    cy = 2; 
+                }
+                const u = Math.random() * Math.PI * 2;
+                const v = Math.random() * Math.PI;
+                const scale = 4.0; 
+                const r = scale * (0.5 + Math.abs(Math.sin(3 * u)) * Math.sin(v));
+                let lx = r * Math.sin(v) * Math.cos(u);
+                let ly = r * Math.cos(v) * 0.8;
+                let lz = r * Math.sin(v) * Math.sin(u);
+                x = lx + cx; y = ly + cy; z = lz + cz;
             }
             else if (type === 'flower') { const u = Math.random()*Math.PI*2, v = Math.random()*Math.PI, r = 10*(1+0.5*Math.sin(5*u)*Math.sin(v)); x = r*Math.sin(v)*Math.cos(u); y = r*Math.sin(v)*Math.sin(u); z = r*Math.cos(v); } 
             else if (type === 'star') { const r = 12, theta = Math.random()*Math.PI*2, phi = Math.acos(2*Math.random()-1); x = r*Math.sin(phi)*Math.cos(theta); y = r*Math.sin(phi)*Math.sin(theta); z = r*Math.cos(phi); if (i%5===0) { const ringR=18+Math.random()*4, ringT=Math.random()*Math.PI*2; x=ringR*Math.cos(ringT); y=0.5*(Math.random()-0.5); z=ringR*Math.sin(ringT); }} 
@@ -275,13 +308,17 @@
         }
     }
 
+    // --- 交互处理 ---
     function handleUiAction() {
+        if (appState === STATE_NEWYEAR_TEXT || appState === STATE_NEWYEAR_SHOW) return;
+
         const btn = document.getElementById('action-btn');
+        const hint = document.getElementById('gesture-hint');
         if (appState === STATE_NORMAL) {
             appState = STATE_HEARTBEAT;
             btn.innerHTML = "放烟花"; 
-            btn.style.background = "#ff3333"; 
-            createTextParticles("", 0, false); 
+            btn.style.background = "#ff3333"; hint.style.opacity = 0; 
+            createTextParticles("73 76 79 86 69 89 79 85", -18, false); 
             config.shape = 'heart'; generateShape('heart');
             document.body.style.backgroundColor = "#1a0000";
         } else if (appState === STATE_HEARTBEAT) {
@@ -289,6 +326,223 @@
         }
     }
 
+    // --- 新年按钮点击 ---
+    document.getElementById('newyear-btn').addEventListener('click', () => {
+        if (appState === STATE_NEWYEAR_TEXT || appState === STATE_NEWYEAR_SHOW) return;
+        
+        // 隐藏旧UI
+        document.getElementById('action-btn').style.opacity = 0;
+        document.getElementById('action-btn').style.pointerEvents = 'none';
+        document.getElementById('gesture-hint').style.opacity = 0;
+        
+        // 显示返回按钮
+        document.getElementById('back-btn').style.display = 'block';
+
+        document.getElementById('newyear-btn').innerHTML = "庆祝中...";
+        document.getElementById('newyear-btn').style.transform = "scale(1.1)";
+        
+        appState = STATE_NEWYEAR_TEXT;
+        document.body.style.backgroundColor = "#220000"; 
+        
+        // 背景花散开
+        config.color = "#ff0000";
+        const colorObj = new THREE.Color(config.color);
+        const colors = geometry.attributes.color.array;
+        for(let i=0; i<config.particleCount; i++) { colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b; }
+        geometry.attributes.color.needsUpdate = true;
+        
+        generateShape('flower'); 
+        createTextParticles("新年快乐！", 0, false, "#ff2222"); 
+
+        setTimeout(() => {
+            appState = STATE_NEWYEAR_SHOW;
+            // 隐藏旧粒子系统，只显示新烟花
+            particles.visible = false;
+            if (textParticles) textParticles.visible = false;
+        }, 3000);
+    });
+
+    // --- 返回按钮点击事件 ---
+    document.getElementById('back-btn').addEventListener('click', () => {
+        // 1. 状态重置
+        appState = STATE_NORMAL;
+
+        // 2. 清理所有高级烟花
+        for(let fw of fireworks) {
+            fw.cleanup();
+        }
+        fireworks = []; // 清空数组
+
+        // 3. 恢复原有粒子可见性
+        particles.visible = true;
+        if(textParticles) textParticles.visible = true;
+        
+        // 4. 恢复背景和粒子颜色
+        document.body.style.backgroundColor = "#000000";
+        config.color = '#ff0000'; // 恢复玫瑰红
+        const colorObj = new THREE.Color(config.color);
+        const colors = geometry.attributes.color.array;
+        for(let i=0; i<config.particleCount; i++) { 
+            colors[i*3] = colorObj.r; 
+            colors[i*3+1] = colorObj.g; 
+            colors[i*3+2] = colorObj.b; 
+        }
+        geometry.attributes.color.needsUpdate = true;
+        
+        // 5. 恢复形状为花朵，文字为岚
+        generateShape('flower');
+        createTextParticles("岚", 0, false);
+        containerGroup.rotation.set(0,0,0);
+        targetRotationX = 0; 
+        targetRotationY = 0;
+
+        // 6. UI 恢复
+        document.getElementById('back-btn').style.display = 'none';
+        document.getElementById('newyear-btn').innerText = "🧨 新年快乐";
+        document.getElementById('newyear-btn').style.transform = "scale(1)";
+        
+        document.getElementById('action-btn').style.opacity = 1;
+        document.getElementById('action-btn').style.pointerEvents = 'auto';
+        document.getElementById('action-btn').innerText = "点这里";
+        document.getElementById('action-btn').style.background = "rgba(255, 20, 147, 0.85)";
+        
+        document.getElementById('gesture-hint').style.opacity = 1;
+        
+        // 7. 重置交互变量
+        smoothInteraction = 0;
+        config.interactionStrength = 0;
+    });
+
+    // --- 高级烟花类 ---
+    class Firework {
+        constructor() {
+            this.done = false;
+            // 目标位置
+            this.dest = new THREE.Vector3((Math.random()-0.5)*50, 10 + Math.random()*20, (Math.random()-0.5)*30);
+            
+            // 随机生成一个鲜艳的颜色
+            this.color = new THREE.Color().setHSL(Math.random(), 1.0, 0.6);
+            
+            // 1. 火箭部分 (Geometry)
+            this.geometry = new THREE.BufferGeometry();
+            this.pos = new THREE.Vector3((Math.random()-0.5)*10, -30, (Math.random()-0.5)*10);
+            this.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([this.pos.x, this.pos.y, this.pos.z]), 3));
+            
+            // 【核心修改】：开启 vertexColors 以支持多彩
+            const colors = new Float32Array([this.color.r, this.color.g, this.color.b]);
+            this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            // 材质：光点调大 (Size: 2.5) 且使用顶点颜色
+            this.material = new THREE.PointsMaterial({
+                size: 2.5, // 保持之前调大的尺寸
+                vertexColors: true, // 使用顶点颜色（多彩）
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            this.rocket = new THREE.Points(this.geometry, this.material);
+            scene.add(this.rocket);
+
+            // 速度
+            this.velocity = new THREE.Vector3(
+                (this.dest.x - this.pos.x) * 0.015,
+                0.5 + Math.random()*0.4,
+                (this.dest.z - this.pos.z) * 0.015
+            );
+        }
+
+        update() {
+            if (!this.exploded) {
+                // 火箭上升
+                this.pos.add(this.velocity);
+                this.rocket.geometry.attributes.position.array[0] = this.pos.x;
+                this.rocket.geometry.attributes.position.array[1] = this.pos.y;
+                this.rocket.geometry.attributes.position.array[2] = this.pos.z;
+                this.rocket.geometry.attributes.position.needsUpdate = true;
+
+                if (this.pos.y >= this.dest.y || this.velocity.y <= 0) {
+                    this.explode();
+                }
+            } else {
+                // 爆炸微粒更新
+                this.particlesData.forEach(p => {
+                    p.velocity.multiplyScalar(0.96); // 空气阻力
+                    p.velocity.y -= 0.005;           // 重力
+                    p.position.add(p.velocity);
+                });
+
+                const positions = this.particleSystem.geometry.attributes.position.array;
+                for (let i = 0; i < this.particlesData.length; i++) {
+                    positions[i*3] = this.particlesData[i].position.x;
+                    positions[i*3+1] = this.particlesData[i].position.y;
+                    positions[i*3+2] = this.particlesData[i].position.z;
+                }
+                this.particleSystem.geometry.attributes.position.needsUpdate = true;
+                this.particleSystem.material.opacity -= 0.008; // 慢慢消失
+
+                if (this.particleSystem.material.opacity <= 0) {
+                    this.cleanup();
+                }
+            }
+        }
+
+        explode() {
+            this.exploded = true;
+            scene.remove(this.rocket);
+            this.geometry.dispose();
+
+            // 爆炸：范围大，高清
+            const pCount = 2000 + Math.floor(Math.random()*500); 
+            const positions = new Float32Array(pCount * 3);
+            this.particlesData = [];
+
+            for (let i = 0; i < pCount; i++) {
+                const p = {
+                    position: this.pos.clone(),
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5), 
+                        (Math.random() - 0.5),
+                        (Math.random() - 0.5)
+                    ).normalize().multiplyScalar(0.5 + Math.random() * 0.8) 
+                };
+                this.particlesData.push(p);
+                positions[i*3] = p.position.x;
+                positions[i*3+1] = p.position.y;
+                positions[i*3+2] = p.position.z;
+            }
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const mat = new THREE.PointsMaterial({
+                color: this.color,
+                size: 0.2, 
+                transparent: true,
+                opacity: 1,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            this.particleSystem = new THREE.Points(geo, mat);
+            scene.add(this.particleSystem);
+        }
+
+        cleanup() {
+            // 安全清理
+            if(this.rocket) {
+                scene.remove(this.rocket);
+                if(this.geometry) this.geometry.dispose();
+            }
+            if (this.particleSystem) {
+                scene.remove(this.particleSystem);
+                if(this.particleSystem.geometry) this.particleSystem.geometry.dispose();
+            }
+            this.done = true;
+        }
+    }
+
+    // --- 原有烟花逻辑 (为了兼容旧按钮) ---
     function startFireworksSequence() {
         const btn = document.getElementById('action-btn');
         btn.innerHTML = "燃放中..."; btn.style.pointerEvents = "none"; btn.style.opacity = 0.6;
@@ -350,10 +604,10 @@
 
     function restoreApp() {
         appState = STATE_NORMAL; globalOpacity = 1.0; particles.material.opacity = 0.8;
-        const btn = document.getElementById('action-btn'); 
-        btn.innerHTML = "点这里"; btn.style.background = "rgba(255, 20, 147, 0.85)"; btn.style.pointerEvents = "auto"; btn.style.opacity = 1; 
+        const btn = document.getElementById('action-btn'); const hint = document.getElementById('gesture-hint');
+        btn.innerHTML = "点这里"; btn.style.background = "rgba(255, 20, 147, 0.85)"; btn.style.pointerEvents = "auto"; btn.style.opacity = 1; hint.style.opacity = 1;
         
-        createTextParticles("山风", 0, false); 
+        createTextParticles("岚", 0, false); 
         config.shape = 'flower'; generateShape('flower'); 
         document.body.style.backgroundColor = "#000000"; containerGroup.scale.set(1,1,1);
         smoothInteraction = 0; config.interactionStrength = 0;
@@ -365,6 +619,9 @@
         
         containerGroup.rotation.set(0,0,0);
         targetRotationX = 0; targetRotationY = 0;
+        
+        particles.visible = true;
+        if(textParticles) textParticles.visible = true;
     }
 
     document.getElementById('action-btn').addEventListener('click', handleUiAction);
@@ -375,7 +632,7 @@
         hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onHandsResults);
         const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240, facingMode: 'user' });
-        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败。<br>请检查是否在HTTPS环境下运行"; });
+        cameraUtils.start().then(() => { document.getElementById('loading').style.display = 'none'; }).catch(err => { document.getElementById('loading-text').innerHTML = "启动失败。<br>请确保使用HTTPS并允许摄像头权限。"; });
     }
 
     function onHandsResults(results) {
@@ -383,7 +640,7 @@
             const videoElem = document.getElementById('video-input');
             if (videoElem.style.opacity !== '0') {
                 videoElem.style.opacity = '0';
-                document.getElementById('gesture-hint').innerText = "🖐️ 移动手掌 | ✊ 握拳切图";
+                document.getElementById('gesture-hint').innerText = "🖐️ 移动手掌旋转 | ✊ 握拳切换";
             }
         }
 
@@ -419,7 +676,42 @@
         requestAnimationFrame(animate);
         let currentStrength = 1; let heartScale = 1; const positions = geometry.attributes.position.array;
 
-        // 手动控制旋转
+        // --- 新年烟花模式 ---
+        if (appState === STATE_NEWYEAR_SHOW) {
+            // 随机发射新烟花
+            if (Math.random() < 0.04) {
+                fireworks.push(new Firework());
+            }
+            // 更新烟花
+            for (let i = fireworks.length - 1; i >= 0; i--) {
+                fireworks[i].update();
+                if (fireworks[i].done) {
+                    fireworks.splice(i, 1);
+                }
+            }
+            renderer.render(scene, camera);
+            return; 
+        }
+
+        // --- 新年文字显示模式 ---
+        if (appState === STATE_NEWYEAR_TEXT) {
+            if (textParticles) {
+                textParticles.material.opacity = Math.min(textParticles.material.opacity + 0.02, 1);
+            }
+            // 背景花散开逻辑
+            for (let i = 0; i < config.particleCount; i++) {
+                const px=i*3, py=i*3+1, pz=i*3+2; 
+                const tx=targetPositions[px], ty=targetPositions[py], tz=targetPositions[pz]; 
+                positions[px] += (tx - positions[px]) * 0.05;
+                positions[py] += (ty - positions[py]) * 0.05;
+                positions[pz] += (tz - positions[pz]) * 0.05;
+            }
+            geometry.attributes.position.needsUpdate = true;
+            renderer.render(scene, camera);
+            return;
+        }
+
+        // --- 原有逻辑保留 ---
         if (config.handDetected && appState <= STATE_HEARTBEAT) {
             containerGroup.rotation.y += (targetRotationY - containerGroup.rotation.y) * 0.1;
             containerGroup.rotation.x += (targetRotationX - containerGroup.rotation.x) * 0.1;
@@ -466,12 +758,11 @@
                 } else {
                     const lerpSpeed = config.handDetected ? 0.12 : 0.05; smoothInteraction += (config.interactionStrength - smoothInteraction) * lerpSpeed; currentStrength = smoothInteraction; heartScale = 1;
                     
-                    // 【修改点2】握拳即切：当握拳程度小于 0.3 时立刻切换
-                    if (smoothInteraction < 0.3 && !wasHandClosed) {
+                    if (smoothInteraction < 0.15 && !wasHandClosed) {
                         wasHandClosed = true;
                         switchToNextShape(); 
-                    } else if (smoothInteraction > 0.6) {
-                        wasHandClosed = false; 
+                    } else if (smoothInteraction > 0.85) {
+                        wasHandClosed = false;
                     }
                 }
                 for (let i = 0; i < config.particleCount; i++) {
@@ -497,14 +788,20 @@
 
         containerGroup.scale.set(1, 1, 1); 
         
+        const fsBtn = document.getElementById('fullscreen-btn');
+        if (appState >= STATE_FW_STAGE1_EXPLODE_CURRENT || (appState === STATE_NORMAL && currentStrength > 0.9)) { fsBtn.style.opacity = '0'; fsBtn.style.pointerEvents = 'none'; } else { fsBtn.style.opacity = '1'; fsBtn.style.pointerEvents = 'auto'; }
         renderer.render(scene, camera);
     }
 
     function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
-    
-    document.getElementById('action-btn').addEventListener('click', handleUiAction);
-    
-    initThree(); setTimeout(initMediaPipe, 1000);
+    function initGUI() {
+        gui = new lil.GUI({ title: '控制台' }); if(window.innerWidth < 600) gui.close();
+        gui.add(config, 'shape', ['flower', 'heart', 'rose', 'star', 'buddha', 'fireworks']).name('切换模型').onChange(val => { if(appState !== STATE_NORMAL) return; generateShape(val); });
+        gui.addColor(config, 'color').name('主题颜色').onChange(val => { const colorObj = new THREE.Color(val); const colors = geometry.attributes.color.array; for(let i=0; i<config.particleCount; i++) { colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b; } geometry.attributes.color.needsUpdate = true; if (textGeometry) { const textColors = textGeometry.attributes.color.array; for(let i=0; i<textParticleCount; i++) { textColors[i*3] = colorObj.r; textColors[i*3+1] = colorObj.g; textColors[i*3+2] = colorObj.b; } textGeometry.attributes.color.needsUpdate = true; } });
+        gui.add(config, 'particleSize', 0.05, 0.4).name('粒子大小').onChange(val => { particles.material.size = val; if(textParticles) textParticles.material.size = val * 0.8; });
+    }
+    document.getElementById('fullscreen-btn').addEventListener('click', () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => { document.getElementById('fullscreen-btn').style.display = 'none'; }); } else { if (document.exitFullscreen) document.exitFullscreen(); } });
+    initThree(); initGUI(); setTimeout(initMediaPipe, 1000);
 </script>
 </body>
 </html>
